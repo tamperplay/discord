@@ -1,69 +1,40 @@
-const signalingServer = new WebSocket(`wss://${window.location.host}`);
+const startButton = document.getElementById('startButton');
+const muteButton = document.getElementById('muteButton');
 let localStream;
-let peerConnection;
 let isMuted = false;
 
-const config = {
-  iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+// Подключение к WebSocket серверу
+const socket = new WebSocket(`wss://${window.location.host}`);
+
+// Когда соединение WebSocket открыто
+socket.onopen = () => {
+  console.log('Connected to WebSocket server');
 };
 
-// HTML элементы
-const usernameInput = document.getElementById('username');
-const loginButton = document.getElementById('loginButton');
-const muteButton = document.getElementById('muteButton');
+// Когда приходит сообщение от WebSocket сервера
+socket.onmessage = (event) => {
+  console.log('Received message:', event.data);
+};
 
-loginButton.addEventListener('click', async () => {
-  const username = usernameInput.value;
-  if (username) {
-    signalingServer.send(JSON.stringify({ type: 'login', username }));
-    loginButton.disabled = true;
-    usernameInput.disabled = true;
+// Функция для старта голосового чата
+startButton.addEventListener('click', async () => {
+  try {
+    // Запрашиваем доступ к микрофону
+    localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    console.log('Audio stream started');
     muteButton.disabled = false;
-    startChat();
+
+    // Отправляем сообщение о подключении
+    socket.send('User joined the chat');
+  } catch (error) {
+    console.error('Error accessing media devices:', error);
   }
 });
 
+// Функция для мьютирования микрофона
 muteButton.addEventListener('click', () => {
   isMuted = !isMuted;
   localStream.getAudioTracks()[0].enabled = !isMuted;
   muteButton.textContent = isMuted ? 'Unmute' : 'Mute';
+  socket.send(isMuted ? 'User muted' : 'User unmuted');
 });
-
-async function startChat() {
-  localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-
-  peerConnection = new RTCPeerConnection(config);
-  localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
-
-  peerConnection.onicecandidate = (event) => {
-    if (event.candidate) {
-      signalingServer.send(JSON.stringify({ type: 'signal', candidate: event.candidate }));
-    }
-  };
-
-  peerConnection.ontrack = (event) => {
-    const audioElement = new Audio();
-    audioElement.srcObject = event.streams[0];
-    audioElement.play();
-  };
-
-  const offer = await peerConnection.createOffer();
-  await peerConnection.setLocalDescription(offer);
-  signalingServer.send(JSON.stringify({ type: 'signal', offer }));
-}
-
-signalingServer.onmessage = async (message) => {
-  const data = JSON.parse(message.data);
-  if (data.type === 'signal') {
-    if (data.offer) {
-      await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
-      const answer = await peerConnection.createAnswer();
-      await peerConnection.setLocalDescription(answer);
-      signalingServer.send(JSON.stringify({ type: 'signal', answer }));
-    } else if (data.answer) {
-      await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
-    } else if (data.candidate) {
-      await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
-    }
-  }
-};
